@@ -1,0 +1,31 @@
+# ATTENTION : valeurs des clés = noms EXACTS dans les fichiers bruts
+
+rosa_bonheur:
+  engine: csv
+  delimiter: ";"
+  decimal: ","
+  datetime_col: "Time"
+  datetime_fmt: "%d/%m/%Y %H:%M"
+  columns:
+    co2: "CO2"
+    temp: "T°"
+    rh: "Humidité"
+
+woehler_cdl:                # fichiers “Sonde Wöhler ... .csv”
+  engine: csv
+  delimiter: ";"
+  decimal: ","
+  # Les 7 lignes de tête varient → on coupe jusqu’à la bonne
+  skip_until: "Date;Heure"
+  header_regex: "Date;Heure"
+  datetime_merge: ["Date", "Heure"]
+  datetime_fmt: "%d/%m/%Y %H:%M:%S"
+  columns:
+    co2: "CO2"
+    temp: "Température"
+    rh: "Humidité"
+
+# ➜ Ajouter une section par nouveau constructeur
+#   engine: csv | xlsx
+#   delimiter / decimal utiles seulement pour CSV
+#   datetime_fmt = strptime (python strftime)

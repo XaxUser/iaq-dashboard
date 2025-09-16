@@ -1,0 +1,7 @@
+*.pyc
+__pycache__/
+data/
+.parquet/
+.env
+Teste données réelles/
+
