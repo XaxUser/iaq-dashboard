@@ -81,7 +81,9 @@ def load_file(up) -> pl.DataFrame | None:
             ),
         ]).alias("time_parsed")
 
-        df = df.with_columns([date_parsed, time_parsed])
+        # ⚠️ appliquer séparément pour éviter ComputeError
+        df = df.with_columns(date_parsed)
+        df = df.with_columns(time_parsed)
 
         # 3) Construire un pl.Datetime **jour/mois/année + heure:minute:seconde**
         df = df.with_columns(
