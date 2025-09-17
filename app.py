@@ -53,35 +53,14 @@ def load_file(up) -> pl.DataFrame | None:
     cols = set(df.columns)
 
     # Si colonnes 'date' et 'h' existent, les combiner
-    # ── Construire la colonne 'datetime' ───────────────────────────
     if {"date", "h"}.issubset(cols):
-        # Forcer parsing explicite JJ/MM/AAAA
-        df = df.with_columns(
-            pl.col("date").str.strptime(pl.Date, "%d/%m/%Y", strict=False).alias("date_parsed")
-        )
-        # Si heure est de type HH:MM[:SS]
-        df = df.with_columns(
-            pl.col("h").cast(pl.Utf8).str.strip().alias("h_clean")
-        )
-        # Construire datetime combiné
-        df = df.with_columns(
-            (pl.col("date_parsed").cast(pl.Datetime) + 
-            pl.col("h_clean").str.strptime(pl.Time, "%H:%M:%S", strict=False).fill_null(
-                pl.col("h_clean").str.strptime(pl.Time, "%H:%M", strict=False)
-            )
-            ).alias("datetime")
-        )
-        df = df.drop(["date_parsed", "h_clean"])
-
+        df = df.with_columns((pl.col("date").cast(pl.Utf8).str.strip() + " " +
+                              pl.col("h").cast(pl.Utf8).str.strip()).alias("datetime"))
     elif "date" in cols:
-        # Si seule la date existe → parser directement
-        df = df.with_columns(
-            pl.col("date").str.strptime(pl.Date, "%d/%m/%Y", strict=False).alias("datetime")
-        )
+        df = df.rename({"date": "datetime"})
     else:
         st.error(f"{up.name} → colonnes 'date' (et optionnel 'h') introuvables.")
         return None
-
 
     # Parser robustement en JJ/MM/AAAA HH:MM avec dayfirst=True
     def parse_fr(ts: str):
