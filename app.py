@@ -55,56 +55,25 @@ def load_file(up) -> pl.DataFrame | None:
     df = df.rename({col: col.strip().lower().replace(" ", "") for col in df.columns})
     cols = set(df.columns)
 
-    # ── Construction robuste de 'datetime' (format FR forcé JJ/MM/AAAA quand 'date' + 'h')
     if {"date", "h"}.issubset(cols):
-        # 1) Parser la colonne 'date' en Date (FR JJ/MM/AAAA) ou conserver si déjà de type Date
-        df = df.with_columns([
-            pl.when(pl.col("date").is_dtype(pl.Date) | pl.col("date").is_dtype(pl.Datetime))
-            .then(pl.col("date").cast(pl.Date))
-            .otherwise(
-                pl.col("date").cast(pl.Utf8).str.strip().str.strptime(pl.Date, "%d/%m/%Y", strict=True)
-            ).alias("date_d"),
-
-            # 2) Parser la colonne 'h' en Time (HH:MM[:SS])
-            pl.coalesce([
-                pl.col("h").cast(pl.Utf8).str.strip().str.strptime(pl.Time, "%H:%M:%S", strict=False),
-                pl.col("h").cast(pl.Utf8).str.strip().str.strptime(pl.Time, "%H:%M", strict=False),
-            ]).alias("time_t"),
-        ])
-
-        # 3) Combiner Date + Time → Datetime
         df = df.with_columns(
-            pl.datetime(
-                year=pl.col("date_d").dt.year(),
-                month=pl.col("date_d").dt.month(),
-                day=pl.col("date_d").dt.day(),
-                hour=pl.col("time_t").dt.hour(),
-                minute=pl.col("time_t").dt.minute(),
-                second=pl.col("time_t").dt.second(),
-            ).alias("datetime")
-        ).drop(["date_d", "time_t"])
-
+            (pl.col("date").cast(pl.Utf8) + " " + pl.col("h").cast(pl.Utf8)).alias("datetime")
+        )
     elif "date" in cols:
-        # Si on n'a qu'une seule colonne 'date' (déjà datetime ou string complète), on la renomme
         df = df.rename({"date": "datetime"})
     else:
         st.error(f"{up.name} → colonnes 'date' (et optionnel 'h') introuvables.")
         return None
 
-    # ── Normaliser 'datetime' en type Datetime si c'est encore une chaîne
-    if df["datetime"].dtype != pl.Datetime:
-        df = df.with_columns(
-            pl.coalesce([
-                pl.col("datetime").str.strptime(pl.Datetime, "%d/%m/%Y %H:%M:%S", strict=False),
-                pl.col("datetime").str.strptime(pl.Datetime, "%d/%m/%Y %H:%M", strict=False),
-                pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False),
-                pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False),
-                pl.col("datetime").map_elements(fallback_parse, return_dtype=pl.Datetime),
-            ]).alias("datetime")
-        )
+    dt = pl.coalesce([
+        pl.col("datetime").str.strptime(pl.Datetime, "%d/%m/%Y %H:%M:%S", strict=False),
+        pl.col("datetime").str.strptime(pl.Datetime, "%d/%m/%Y %H:%M", strict=False),
+        pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False),
+        pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False),
+        pl.col("datetime").map_elements(fallback_parse, return_dtype=pl.Datetime)
+    ])
 
-    df = df.drop_nulls("datetime")
-
+    df = df.with_columns(dt.alias("datetime")).drop_nulls("datetime")
 
     reserved = {"datetime", "date", "h"}
     numeric_cols = []
