@@ -79,21 +79,14 @@ def load_file(up) -> pl.DataFrame | None:
         st.error(f"{up.name} → colonnes 'date' (et optionnel 'h') introuvables.")
         return None
 
-    # ── Parser en jour/mois/année (jour d'abord) avec plusieurs formats ───────────
-    parse_candidates = [
-        "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M",
-        "%d-%m-%Y %H:%M:%S", "%d-%m-%Y %H:%M",
-        "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
-        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"
-    ]
-    dt_exprs = [pl.col("datetime").str.strptime(pl.Datetime, fmt, strict=False) for fmt in parse_candidates]
-    dt = pl.coalesce(dt_exprs + [
-        # dernier recours : parser dayfirst=True
-        pl.col("datetime").map_elements(lambda s: parser.parse(s, dayfirst=True) if s else None,
-                                        return_dtype=pl.Datetime)
-    ])
+    # ⚠️ Forcer parsing en JJ/MM/AAAA (dayfirst=True)
+    df = df.with_columns(
+        pl.col("datetime").map_elements(
+            lambda s: parser.parse(s, dayfirst=True) if s else None,
+            return_dtype=pl.Datetime
+        )
+    ).drop_nulls("datetime")
 
-    df = df.with_columns(dt.alias("datetime")).drop_nulls("datetime")
 
     # ── colonnes numériques ────────────────────────────────────────────────────────
     reserved = {"datetime", "date", "h"}
