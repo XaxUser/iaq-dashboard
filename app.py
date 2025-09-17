@@ -52,12 +52,13 @@ def load_file(up) -> pl.DataFrame | None:
         st.error(f"Erreur lors de la lecture de {up.name} : {e}")
         return None
 
+    # nettoyage des noms de colonnes
     df = df.rename({col: col.strip().lower().replace(" ", "") for col in df.columns})
     cols = set(df.columns)
 
-        # ───────── PARSING ROBUSTE DES DATES/HEURES ─────────
+    # ───────── PARSING ROBUSTE DES DATES/HEURES ─────────
     if {"date", "h"}.issubset(cols):
-        # 1) DATE → pl.Date (avec priorité au format FR)
+        # Date au format français (jour/mois/année prioritaire)
         date_parsed = pl.coalesce([
             pl.col("date").cast(pl.Date, strict=False),
             pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%d/%m/%Y", strict=False),
@@ -65,13 +66,13 @@ def load_file(up) -> pl.DataFrame | None:
             pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False),
         ]).alias("date_parsed")
 
-        # 2) HEURE → pl.Time (string, datetime, ou fraction Excel)
+        # Heure sous plusieurs formats possibles
         time_parsed = pl.coalesce([
-            pl.col("h").cast(pl.Time, strict=False),                                 # déjà time
-            pl.col("h").cast(pl.Datetime, strict=False).dt.time(),                   # datetime -> time
+            pl.col("h").cast(pl.Time, strict=False),
+            pl.col("h").cast(pl.Datetime, strict=False).dt.time(),
             pl.col("h").cast(pl.Utf8).str.strptime(pl.Time, "%H:%M:%S", strict=False),
             pl.col("h").cast(pl.Utf8).str.strptime(pl.Time, "%H:%M", strict=False),
-            # fraction de jour Excel (ex: 0.5 = 12:00:00)
+            # fraction de jour Excel (0.5 = 12h00)
             (
                 (pl.col("h").cast(pl.Float64, strict=False) * 86400).round(0).cast(pl.Int64)
                 .map_elements(
@@ -81,11 +82,11 @@ def load_file(up) -> pl.DataFrame | None:
             ),
         ]).alias("time_parsed")
 
-        # ⚠️ appliquer séparément pour éviter ComputeError
+        # appliquer séparément pour éviter ComputeError
         df = df.with_columns(date_parsed)
         df = df.with_columns(time_parsed)
 
-        # 3) Construire un pl.Datetime **jour/mois/année + heure:minute:seconde**
+        # Combinaison en datetime
         df = df.with_columns(
             pl.datetime(
                 pl.col("date_parsed").dt.year(),
@@ -98,14 +99,13 @@ def load_file(up) -> pl.DataFrame | None:
         ).drop(["date_parsed", "time_parsed"])
 
     elif "date" in cols:
-        # Cas 1 seule colonne 'date' (peut contenir date+heure)
+        # Cas avec une seule colonne 'date' (date + heure possibles)
         dt = pl.coalesce([
             pl.col("date").cast(pl.Datetime, strict=False),
             pl.col("date").cast(pl.Utf8).str.strptime(pl.Datetime, "%d/%m/%Y %H:%M:%S", strict=False),
             pl.col("date").cast(pl.Utf8).str.strptime(pl.Datetime, "%d/%m/%Y %H:%M", strict=False),
             pl.col("date").cast(pl.Utf8).str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False),
             pl.col("date").cast(pl.Utf8).str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False),
-            # date sans heure → minuit
             pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%d/%m/%Y", strict=False).cast(pl.Datetime),
         ])
         df = df.with_columns(dt.alias("datetime"))
@@ -115,7 +115,7 @@ def load_file(up) -> pl.DataFrame | None:
 
     df = df.drop_nulls("datetime")
 
-
+    # colonnes numériques
     reserved = {"datetime", "date", "h"}
     numeric_cols = []
     for c in df.columns:
@@ -137,6 +137,7 @@ def load_file(up) -> pl.DataFrame | None:
     return df.select(["datetime"] + numeric_cols).with_columns(
         pl.lit(up.name).alias("sensor")
     )
+
 
 def detect_outliers_iqr(df: pl.DataFrame, column: str) -> pl.DataFrame:
     q1 = df[column].quantile(0.25)
