@@ -52,29 +52,65 @@ def load_file(up) -> pl.DataFrame | None:
     df = df.rename({col: col.strip().lower().replace(" ", "") for col in df.columns})
     cols = set(df.columns)
 
-    # Si colonnes 'date' et 'h' existent, les combiner
+    # Fonction pour parser explicitement le format français
+    def parse_fr_datetime(date_str: str, time_str: str = None):
+        try:
+            # Nettoyer les chaînes
+            date_str = str(date_str).strip()
+            if time_str:
+                time_str = str(time_str).strip()
+            
+            # Parse la date en format JJ/MM/AAAA
+            date_parts = date_str.replace("-", "/").split("/")
+            if len(date_parts) != 3:
+                return None
+                
+            day, month, year = date_parts
+            # Compléter l'année si nécessaire (ex: 25 → 2025)
+            if len(year) == 2:
+                year = f"20{year}" if int(year) <= 50 else f"19{year}"
+            
+            # Gérer l'heure
+            if time_str:
+                time_parts = time_str.replace(":", " ").split()
+                hour = time_parts[0] if len(time_parts) > 0 else "00"
+                minute = time_parts[1] if len(time_parts) > 1 else "00"
+                time_formatted = f"{hour.zfill(2)}:{minute.zfill(2)}:00"
+            else:
+                time_formatted = "00:00:00"
+            
+            # Créer la datetime string au format attendu par le parser
+            datetime_str = f"{day.zfill(2)}/{month.zfill(2)}/{year} {time_formatted}"
+            return parser.parse(datetime_str, dayfirst=True)
+        except Exception:
+            return None
+
+    # Si colonnes 'date' et 'h' existent, les combiner avec parsing explicite
     if {"date", "h"}.issubset(cols):
-        # Formater correctement la date et l'heure avant concaténation
         df = df.with_columns(
-            pl.col("date").cast(pl.Utf8).str.strip() + " " +
-            pl.col("h").cast(pl.Utf8).str.strip()
-        ).rename({"date": "datetime"}).drop("h")
+            pl.struct(["date", "h"]).map_elements(
+                lambda x: parse_fr_datetime(x["date"], x["h"]),
+                return_dtype=pl.Datetime
+            ).alias("datetime")
+        ).drop("h")
     elif "date" in cols:
-        df = df.rename({"date": "datetime"})
+        # Cas où on a seulement une colonne date (déjà formatée)
+        df = df.with_columns(
+            pl.col("date").map_elements(
+                lambda x: parse_fr_datetime(x),
+                return_dtype=pl.Datetime
+            ).alias("datetime")
+        ).drop("date")
     else:
         st.error(f"{up.name} → colonnes 'date' (et optionnel 'h') introuvables.")
         return None
 
-    # Parser robustement en JJ/MM/AAAA HH:MM avec dayfirst=True
-    def parse_fr(ts: str):
-        try:
-            return parser.parse(ts, dayfirst=True)
-        except Exception:
-            return None
+    # Filtrer les lignes où le parsing a échoué
+    df = df.filter(pl.col("datetime").is_not_null())
 
-    df = df.with_columns(
-        pl.col("datetime").map_elements(parse_fr, return_dtype=pl.Datetime)
-    ).drop_nulls("datetime")
+    if df.height == 0:
+        st.error(f"{up.name} → aucune date valide trouvée après parsing.")
+        return None
 
     # Colonnes numériques
     reserved = {"datetime"}
