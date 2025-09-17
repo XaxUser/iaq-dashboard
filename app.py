@@ -226,7 +226,8 @@ date_range = st.sidebar.date_input(
     "Plage de dates :",
     value=st.session_state.get("date_range_default", (min_date.date(), max_date.date())),
     min_value=min_date.date(),
-    max_value=max_date.date()
+    max_value=max_date.date(),
+    format="DD/MM/YYYY"
 )
 
 # Filtrer les données selon la plage de dates choisie
