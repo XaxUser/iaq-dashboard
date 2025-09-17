@@ -3,6 +3,14 @@
 #   • Export des graphiques en PDF/PNG/SVG/JPEG
 #   • Sauvegarde / chargement des paramètres (JSON)
 # ---------------------------------------------------------------
+import webbrowser, threading
+
+def open_browser():
+    webbrowser.open_new("http://localhost:8501")
+
+threading.Timer(1, open_browser).start()
+
+
 import io, json
 from datetime import date
 import streamlit as st
@@ -173,6 +181,8 @@ for df in frames:
     df = df.with_columns([pl.col(c).cast(pl.Float64, strict=False) for c in all_numeric])
     aligned.append(df.select(["datetime", "sensor"] + all_numeric))
 
+data = pl.concat(aligned).sort("datetime") 
+
 data = pl.concat(aligned).sort("datetime")
 
 min_date = data["datetime"].min()
@@ -217,6 +227,16 @@ date_range = st.sidebar.date_input(
     min_value=min_date.date(),
     max_value=max_date.date()
 )
+
+# Filtrer les données selon la plage de dates choisie
+if isinstance(date_range, tuple) and len(date_range) == 2:
+    start_date = pd.to_datetime(date_range[0])
+    end_date = pd.to_datetime(date_range[1])
+
+    data = data.filter(
+        (pl.col("datetime") >= start_date) & (pl.col("datetime") <= end_date)
+    )
+
 
 sel_sensors = st.sidebar.multiselect(
     "Sondes :",
