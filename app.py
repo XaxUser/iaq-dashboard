@@ -39,11 +39,8 @@ def load_file(up) -> pl.DataFrame | None:
 
     try:
         if is_xls:
-            excel = pd.ExcelFile(io.BytesIO(raw))
-            if not excel.sheet_names:
-                st.error(f"{up.name} : aucune feuille Excel détectée.")
-                return None
-            pdf = excel.parse(sheet_name=excel.sheet_names[0])
+            # ⚠️ Lire TOUT en TEXTE pour ne pas laisser pandas deviner les dates en mm/dd
+            pdf = pd.read_excel(io.BytesIO(raw), sheet_name=0, dtype=str, engine="openpyxl")
             df = pl.from_pandas(pdf)
         else:
             df = pl.read_csv(io.BytesIO(raw), separator=sep, encoding="latin1",
@@ -52,29 +49,53 @@ def load_file(up) -> pl.DataFrame | None:
         st.error(f"Erreur lors de la lecture de {up.name} : {e}")
         return None
 
+    # noms de colonnes propres
     df = df.rename({col: col.strip().lower().replace(" ", "") for col in df.columns})
     cols = set(df.columns)
 
+    # ── Normaliser 'date' et 'h' en texte (format FR) ──────────────────────────────
+    if "date" in cols:
+        # si c'est déjà du datetime/date -> forcer format JJ/MM/AAAA
+        if df["date"].dtype in (pl.Datetime, pl.Date):
+            df = df.with_columns(pl.col("date").dt.strftime("%d/%m/%Y").alias("date"))
+        else:
+            df = df.with_columns(
+                pl.col("date").cast(pl.Utf8)
+                .str.replace_all("-", "/")
+                .str.strip()
+                .alias("date")
+            )
+
+    if "h" in cols:
+        # garder HH:MM[:SS] propre
+        df = df.with_columns(pl.col("h").cast(pl.Utf8).str.strip().alias("h"))
+
+    # ── Construire la colonne 'datetime' ───────────────────────────────────────────
     if {"date", "h"}.issubset(cols):
-        df = df.with_columns(
-            (pl.col("date").cast(pl.Utf8) + " " + pl.col("h").cast(pl.Utf8)).alias("datetime")
-        )
+        df = df.with_columns((pl.col("date") + " " + pl.col("h")).alias("datetime"))
     elif "date" in cols:
         df = df.rename({"date": "datetime"})
     else:
         st.error(f"{up.name} → colonnes 'date' (et optionnel 'h') introuvables.")
         return None
 
-    dt = pl.coalesce([
-        pl.col("datetime").str.strptime(pl.Datetime, "%d/%m/%Y %H:%M:%S", strict=False),
-        pl.col("datetime").str.strptime(pl.Datetime, "%d/%m/%Y %H:%M", strict=False),
-        pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False),
-        pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False),
-        pl.col("datetime").map_elements(fallback_parse, return_dtype=pl.Datetime)
+    # ── Parser en jour/mois/année (jour d'abord) avec plusieurs formats ───────────
+    parse_candidates = [
+        "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M",
+        "%d-%m-%Y %H:%M:%S", "%d-%m-%Y %H:%M",
+        "%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M",
+        "%d/%m/%Y", "%d-%m-%Y", "%Y-%m-%d"
+    ]
+    dt_exprs = [pl.col("datetime").str.strptime(pl.Datetime, fmt, strict=False) for fmt in parse_candidates]
+    dt = pl.coalesce(dt_exprs + [
+        # dernier recours : parser dayfirst=True
+        pl.col("datetime").map_elements(lambda s: parser.parse(s, dayfirst=True) if s else None,
+                                        return_dtype=pl.Datetime)
     ])
 
     df = df.with_columns(dt.alias("datetime")).drop_nulls("datetime")
 
+    # ── colonnes numériques ────────────────────────────────────────────────────────
     reserved = {"datetime", "date", "h"}
     numeric_cols = []
     for c in df.columns:
@@ -96,6 +117,7 @@ def load_file(up) -> pl.DataFrame | None:
     return df.select(["datetime"] + numeric_cols).with_columns(
         pl.lit(up.name).alias("sensor")
     )
+
 
 def detect_outliers_iqr(df: pl.DataFrame, column: str) -> pl.DataFrame:
     q1 = df[column].quantile(0.25)
