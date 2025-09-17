@@ -54,8 +54,11 @@ def load_file(up) -> pl.DataFrame | None:
 
     # Si colonnes 'date' et 'h' existent, les combiner
     if {"date", "h"}.issubset(cols):
-        df = df.with_columns((pl.col("date").cast(pl.Utf8).str.strip() + " " +
-                              pl.col("h").cast(pl.Utf8).str.strip()).alias("datetime"))
+        # Formater correctement la date et l'heure avant concaténation
+        df = df.with_columns(
+            pl.col("date").cast(pl.Utf8).str.strip() + " " +
+            pl.col("h").cast(pl.Utf8).str.strip()
+        ).rename({"date": "datetime"}).drop("h")
     elif "date" in cols:
         df = df.rename({"date": "datetime"})
     else:
@@ -74,7 +77,7 @@ def load_file(up) -> pl.DataFrame | None:
     ).drop_nulls("datetime")
 
     # Colonnes numériques
-    reserved = {"datetime", "date", "h"}
+    reserved = {"datetime"}
     numeric_cols = []
     for c in df.columns:
         if c in reserved:
