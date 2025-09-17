@@ -55,25 +55,64 @@ def load_file(up) -> pl.DataFrame | None:
     df = df.rename({col: col.strip().lower().replace(" ", "") for col in df.columns})
     cols = set(df.columns)
 
+        # ───────── PARSING ROBUSTE DES DATES/HEURES ─────────
     if {"date", "h"}.issubset(cols):
+        # 1) DATE → pl.Date (avec priorité au format FR)
+        date_parsed = pl.coalesce([
+            pl.col("date").cast(pl.Date, strict=False),
+            pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%d/%m/%Y", strict=False),
+            pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%d-%m-%Y", strict=False),
+            pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False),
+        ]).alias("date_parsed")
+
+        # 2) HEURE → pl.Time (string, datetime, ou fraction Excel)
+        time_parsed = pl.coalesce([
+            pl.col("h").cast(pl.Time, strict=False),                                 # déjà time
+            pl.col("h").cast(pl.Datetime, strict=False).dt.time(),                   # datetime -> time
+            pl.col("h").cast(pl.Utf8).str.strptime(pl.Time, "%H:%M:%S", strict=False),
+            pl.col("h").cast(pl.Utf8).str.strptime(pl.Time, "%H:%M", strict=False),
+            # fraction de jour Excel (ex: 0.5 = 12:00:00)
+            (
+                (pl.col("h").cast(pl.Float64, strict=False) * 86400).round(0).cast(pl.Int64)
+                .map_elements(
+                    lambda s: None if s is None else pd.to_datetime(int(s), unit="s").time(),
+                    return_dtype=pl.Time
+                )
+            ),
+        ]).alias("time_parsed")
+
+        df = df.with_columns([date_parsed, time_parsed])
+
+        # 3) Construire un pl.Datetime **jour/mois/année + heure:minute:seconde**
         df = df.with_columns(
-            (pl.col("date").cast(pl.Utf8) + " " + pl.col("h").cast(pl.Utf8)).alias("datetime")
-        )
+            pl.datetime(
+                pl.col("date_parsed").dt.year(),
+                pl.col("date_parsed").dt.month(),
+                pl.col("date_parsed").dt.day(),
+                pl.col("time_parsed").dt.hour(),
+                pl.col("time_parsed").dt.minute(),
+                pl.col("time_parsed").dt.second(),
+            ).alias("datetime")
+        ).drop(["date_parsed", "time_parsed"])
+
     elif "date" in cols:
-        df = df.rename({"date": "datetime"})
+        # Cas 1 seule colonne 'date' (peut contenir date+heure)
+        dt = pl.coalesce([
+            pl.col("date").cast(pl.Datetime, strict=False),
+            pl.col("date").cast(pl.Utf8).str.strptime(pl.Datetime, "%d/%m/%Y %H:%M:%S", strict=False),
+            pl.col("date").cast(pl.Utf8).str.strptime(pl.Datetime, "%d/%m/%Y %H:%M", strict=False),
+            pl.col("date").cast(pl.Utf8).str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False),
+            pl.col("date").cast(pl.Utf8).str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False),
+            # date sans heure → minuit
+            pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%d/%m/%Y", strict=False).cast(pl.Datetime),
+        ])
+        df = df.with_columns(dt.alias("datetime"))
     else:
         st.error(f"{up.name} → colonnes 'date' (et optionnel 'h') introuvables.")
         return None
 
-    dt = pl.coalesce([
-        pl.col("datetime").str.strptime(pl.Datetime, "%d/%m/%Y %H:%M:%S", strict=False),
-        pl.col("datetime").str.strptime(pl.Datetime, "%d/%m/%Y %H:%M", strict=False),
-        pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M:%S", strict=False),
-        pl.col("datetime").str.strptime(pl.Datetime, "%Y-%m-%d %H:%M", strict=False),
-        pl.col("datetime").map_elements(fallback_parse, return_dtype=pl.Datetime)
-    ])
+    df = df.drop_nulls("datetime")
 
-    df = df.with_columns(dt.alias("datetime")).drop_nulls("datetime")
 
     reserved = {"datetime", "date", "h"}
     numeric_cols = []
