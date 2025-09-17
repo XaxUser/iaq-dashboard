@@ -58,35 +58,51 @@ def load_file(up) -> pl.DataFrame | None:
 
     # ───────── PARSING ROBUSTE DES DATES/HEURES ─────────
     if {"date", "h"}.issubset(cols):
-        # Date au format français (jour/mois/année prioritaire)
-        date_parsed = pl.coalesce([
-            pl.col("date").cast(pl.Date, strict=False),
-            pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%d/%m/%Y", strict=False),
-            pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%d-%m-%Y", strict=False),
-            pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False),
-        ]).alias("date_parsed")
-
-        # Heure sous plusieurs formats possibles
-        time_parsed = pl.coalesce([
-            pl.col("h").cast(pl.Time, strict=False),
-            pl.col("h").cast(pl.Datetime, strict=False).dt.time(),
-            pl.col("h").cast(pl.Utf8).str.strptime(pl.Time, "%H:%M:%S", strict=False),
-            pl.col("h").cast(pl.Utf8).str.strptime(pl.Time, "%H:%M", strict=False),
-            # fraction de jour Excel (0.5 = 12h00)
-            (
-                (pl.col("h").cast(pl.Float64, strict=False) * 86400).round(0).cast(pl.Int64)
-                .map_elements(
-                    lambda s: None if s is None else pd.to_datetime(int(s), unit="s").time(),
-                    return_dtype=pl.Time
+        # --- DATE ---
+        try:
+            df = df.with_columns(
+                pl.col("date").cast(pl.Date, strict=False).alias("date_parsed")
+            )
+        except:
+            try:
+                df = df.with_columns(
+                    pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%d/%m/%Y", strict=False).alias("date_parsed")
                 )
-            ),
-        ]).alias("time_parsed")
+            except:
+                df = df.with_columns(
+                    pl.col("date").cast(pl.Utf8).str.strptime(pl.Date, "%Y-%m-%d", strict=False).alias("date_parsed")
+                )
 
-        # appliquer séparément pour éviter ComputeError
-        df = df.with_columns(date_parsed)
-        df = df.with_columns(time_parsed)
+        # --- HEURE ---
+        time_expr = None
+        try:
+            time_expr = pl.col("h").cast(pl.Time, strict=False)
+            df = df.with_columns(time_expr.alias("time_parsed"))
+        except:
+            try:
+                time_expr = pl.col("h").cast(pl.Datetime, strict=False).dt.time()
+                df = df.with_columns(time_expr.alias("time_parsed"))
+            except:
+                try:
+                    time_expr = pl.col("h").cast(pl.Utf8).str.strptime(pl.Time, "%H:%M:%S", strict=False)
+                    df = df.with_columns(time_expr.alias("time_parsed"))
+                except:
+                    try:
+                        time_expr = pl.col("h").cast(pl.Utf8).str.strptime(pl.Time, "%H:%M", strict=False)
+                        df = df.with_columns(time_expr.alias("time_parsed"))
+                    except:
+                        # Cas fraction de jour Excel
+                        df = df.with_columns(
+                            (
+                                (pl.col("h").cast(pl.Float64, strict=False) * 86400).round(0).cast(pl.Int64)
+                                .map_elements(
+                                    lambda s: None if s is None else pd.to_datetime(int(s), unit="s").time(),
+                                    return_dtype=pl.Time
+                                ).alias("time_parsed")
+                            )
+                        )
 
-        # Combinaison en datetime
+        # --- COMBINE DATE + HEURE ---
         df = df.with_columns(
             pl.datetime(
                 pl.col("date_parsed").dt.year(),
@@ -97,6 +113,7 @@ def load_file(up) -> pl.DataFrame | None:
                 pl.col("time_parsed").dt.second(),
             ).alias("datetime")
         ).drop(["date_parsed", "time_parsed"])
+
 
     elif "date" in cols:
         # Cas avec une seule colonne 'date' (date + heure possibles)
