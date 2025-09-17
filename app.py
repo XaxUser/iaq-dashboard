@@ -32,63 +32,48 @@ def fallback_parse(ts: str):
         return None
 
 def load_file(up) -> pl.DataFrame | None:
-    """Lit un fichier CSV/XLSX, renvoie un DF avec datetime, sensor, + colonnes numériques."""
+    """Lit un fichier CSV/XLSX, renvoie un DF avec datetime, sensor, + colonnes numériques (toujours en JJ/MM/AAAA)."""
     raw = up.read()
     is_xls = up.name.lower().endswith((".xls", ".xlsx"))
     sep = ";" if (not is_xls and b";" in raw.splitlines()[0]) else ","
 
     try:
         if is_xls:
-            # ⚠️ Lire TOUT en TEXTE pour ne pas laisser pandas deviner les dates en mm/dd
+            # Lire toutes les colonnes en texte
             pdf = pd.read_excel(io.BytesIO(raw), sheet_name=0, dtype=str, engine="openpyxl")
-            df = pl.from_pandas(pdf)
         else:
-            df = pl.read_csv(io.BytesIO(raw), separator=sep, encoding="latin1",
-                             truncate_ragged_lines=True)
+            pdf = pd.read_csv(io.BytesIO(raw), sep=sep, encoding="latin1", dtype=str)
+        df = pl.from_pandas(pdf)
     except Exception as e:
         st.error(f"Erreur lors de la lecture de {up.name} : {e}")
         return None
 
-    # noms de colonnes propres
+    # Normaliser les noms de colonnes
     df = df.rename({col: col.strip().lower().replace(" ", "") for col in df.columns})
     cols = set(df.columns)
 
-    # ── Normaliser 'date' et 'h' en texte (format FR) ──────────────────────────────
-    if "date" in cols:
-        # si c'est déjà du datetime/date -> forcer format JJ/MM/AAAA
-        if df["date"].dtype in (pl.Datetime, pl.Date):
-            df = df.with_columns(pl.col("date").dt.strftime("%d/%m/%Y").alias("date"))
-        else:
-            df = df.with_columns(
-                pl.col("date").cast(pl.Utf8)
-                .str.replace_all("-", "/")
-                .str.strip()
-                .alias("date")
-            )
-
-    if "h" in cols:
-        # garder HH:MM[:SS] propre
-        df = df.with_columns(pl.col("h").cast(pl.Utf8).str.strip().alias("h"))
-
-    # ── Construire la colonne 'datetime' ───────────────────────────────────────────
+    # Si colonnes 'date' et 'h' existent, les combiner
     if {"date", "h"}.issubset(cols):
-        df = df.with_columns((pl.col("date") + " " + pl.col("h")).alias("datetime"))
+        df = df.with_columns((pl.col("date").cast(pl.Utf8).str.strip() + " " +
+                              pl.col("h").cast(pl.Utf8).str.strip()).alias("datetime"))
     elif "date" in cols:
         df = df.rename({"date": "datetime"})
     else:
         st.error(f"{up.name} → colonnes 'date' (et optionnel 'h') introuvables.")
         return None
 
-    # ⚠️ Forcer parsing en JJ/MM/AAAA (dayfirst=True)
+    # Parser robustement en JJ/MM/AAAA HH:MM avec dayfirst=True
+    def parse_fr(ts: str):
+        try:
+            return parser.parse(ts, dayfirst=True)
+        except Exception:
+            return None
+
     df = df.with_columns(
-        pl.col("datetime").map_elements(
-            lambda s: parser.parse(s, dayfirst=True) if s else None,
-            return_dtype=pl.Datetime
-        )
+        pl.col("datetime").map_elements(parse_fr, return_dtype=pl.Datetime)
     ).drop_nulls("datetime")
 
-
-    # ── colonnes numériques ────────────────────────────────────────────────────────
+    # Colonnes numériques
     reserved = {"datetime", "date", "h"}
     numeric_cols = []
     for c in df.columns:
@@ -110,6 +95,7 @@ def load_file(up) -> pl.DataFrame | None:
     return df.select(["datetime"] + numeric_cols).with_columns(
         pl.lit(up.name).alias("sensor")
     )
+
 
 
 def detect_outliers_iqr(df: pl.DataFrame, column: str) -> pl.DataFrame:
