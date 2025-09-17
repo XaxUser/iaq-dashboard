@@ -56,9 +56,16 @@ def load_file(up) -> pl.DataFrame | None:
     cols = set(df.columns)
 
     if {"date", "h"}.issubset(cols):
+        # CORRECTION : parser d'abord la date seule avec dayfirst=True
         df = df.with_columns(
-            (pl.col("date").cast(pl.Utf8) + " " + pl.col("h").cast(pl.Utf8)).alias("datetime")
+            pl.col("date").str.strptime(pl.Date, "%d/%m/%Y", strict=False, day_first=True)
+            .dt.strftime("%Y-%m-%d")
+            .alias("date_parsed")
         )
+        df = df.with_columns(
+            (pl.col("date_parsed") + " " + pl.col("h").cast(pl.Utf8)).alias("datetime")
+        )
+        df = df.drop("date_parsed")
     elif "date" in cols:
         df = df.rename({"date": "datetime"})
     else:
