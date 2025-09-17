@@ -300,14 +300,22 @@ date_range = st.sidebar.date_input(
     format="DD/MM/YYYY"
 )
 
-# Filtrer les données selon la plage de dates choisie
+# Filtrer les données selon la plage de dates choisie (fin de période incluse)
 if isinstance(date_range, tuple) and len(date_range) == 2:
     start_date = pd.to_datetime(date_range[0])
     end_date = pd.to_datetime(date_range[1])
+else:
+    # au cas où Streamlit renverrait une seule date
+    start_date = pd.to_datetime(date_range)
+    end_date = start_date
 
-    data = data.filter(
-        (pl.col("datetime") >= start_date) & (pl.col("datetime") <= end_date)
-    )
+# borne supérieure EXCLUSIVE = lendemain 00:00 (inclut TOUT le dernier jour sélectionné)
+end_exclusive = end_date + pd.Timedelta(days=1)
+
+data = data.filter(
+    (pl.col("datetime") >= start_date) & (pl.col("datetime") < end_exclusive)
+)
+
 
 
 sel_sensors = st.sidebar.multiselect(
