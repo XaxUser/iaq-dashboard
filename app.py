@@ -103,6 +103,7 @@ def load_file(up) -> pl.DataFrame | None:
                         )
 
         # --- COMBINE DATE + HEURE ---
+        # COMBINE DATE + HEURE
         df = df.with_columns(
             pl.datetime(
                 pl.col("date_parsed").dt.year(),
@@ -112,7 +113,8 @@ def load_file(up) -> pl.DataFrame | None:
                 pl.col("time_parsed").dt.minute(),
                 pl.col("time_parsed").dt.second(),
             ).alias("datetime")
-        ).drop(["date_parsed", "time_parsed"])
+        ).drop(["date_parsed", "time_parsed", "date", "h"])   # 👈 retirer aussi les colonnes originales
+
 
 
     elif "date" in cols:
